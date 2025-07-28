@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-backend
+  namespace: kuadrant
+  labels:
+    app: mock-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock-backend
+  template:
+    metadata:
+      labels:
+        app: mock-backend
+    spec:
+      containers:
+      - name: mock-backend
+        image: quay.io/acristur/mock-backend:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-backend
+  namespace: kuadrant
+  labels:
+    app: mock-backend
+spec:
+  ports:
+  - port: 8080
+    name: http
+    targetPort: http
+  selector:
+    app: mock-backend
+---
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1beta1.custom.metrics.k8s.io
+spec:
+  service:
+    name: mock-backend
+    namespace: kuadrant
+    port: 8080
+  group: custom.metrics.k8s.io
+  version: v1beta1
+  insecureSkipTLSVerify: true
+  groupPriorityMinimum: 100
+  versionPriority: 100
+---
+# apiVersion: autoscaling/v2
+# kind: HorizontalPodAutoscaler
+# metadata:
+#   name: mock-backend
+# spec:
+#   scaleTargetRef:
+#     apiVersion: apps/v1
+#     kind: Deployment
+#     name: mock-backend
+#   minReplicas: 1
+#   maxReplicas: 10
+#   metrics:
+#   - type: Pods
+#     pods:
+#       metric:
+#         name: http_requests_total
+#       target:
+#         type: AverageValue
+#         averageValue: 100 

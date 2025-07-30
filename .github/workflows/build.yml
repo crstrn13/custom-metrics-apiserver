@@ -12,7 +12,7 @@ on:
 
 env:
   REGISTRY: quay.io
-  IMAGE_NAME: acristur/mock-backend
+  IMAGE_NAME: acristur/custom-metrics-apiserver
 
 jobs:
   build:

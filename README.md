@@ -1,13 +1,21 @@
-# Mock Backend
+# Custom Metrics APIServer
 
-A simple HTTP server that implements the Kubernetes custom metrics API. It exposes a `/get` endpoint similar to httpbin and provides request count metrics that can be used by the Kubernetes HPA (Horizontal Pod Autoscaler).
+A Kubernetes custom metrics API server implementation that tracks HTTP request counts. It exposes a simple `/get` endpoint and provides these request counts as metrics that can be used by the Kubernetes HPA (Horizontal Pod Autoscaler).
+
+## Overview
+
+This custom metrics adapter:
+- Tracks HTTP request counts per pod
+- Exposes metrics through the Kubernetes custom metrics API
+- Provides a simple `/get` endpoint that increments the counter
+- Integrates with HPA for autoscaling based on request counts
 
 ## Features
 
-- `/get` endpoint that returns request information (similar to httpbin)
+- Automatic request counting for each pod
 - Custom metrics API implementation for Kubernetes HPA
-- HTTPS support with auto-generated self-signed certificates
-- Request counting metrics
+- Simple `/get` endpoint for testing
+- Kubernetes-native metrics reporting
 
 ## Getting Started
 
@@ -15,47 +23,78 @@ A simple HTTP server that implements the Kubernetes custom metrics API. It expos
 
 - Go 1.24 or later
 - Kubernetes cluster with metrics API enabled
+- kubectl access to your cluster
 
 ### Building
 
 ```bash
-go build -o mock-backend cmd/main.go
+go build -o custom-metrics-apiserver cmd/main.go
 ```
 
 ### Running Locally
 
 ```bash
-./mock-backend
+./custom-metrics-apiserver
 ```
 
-The server will start on port 8080 with HTTPS enabled.
+The server will start on port 8080.
 
 ### Deploying to Kubernetes
 
-1. Build and push the Docker image:
-```bash
-docker build -t your-registry/mock-backend:latest .
-docker push your-registry/mock-backend:latest
-```
-
-2. Update the image in `deploy/k8s/deployment.yaml` and apply:
+1. Apply the deployment and RBAC configuration:
 ```bash
 kubectl apply -f deploy/k8s/deployment.yaml
 ```
 
-## API Endpoints
+2. Verify the installation:
+```bash
+kubectl get apiservice v1beta1.custom.metrics.k8s.io
+```
 
-### GET /get
+## Usage
 
-Returns information about the incoming request, including:
-- Headers
-- Query parameters
-- Origin IP
-- URL
+### Testing Request Counting
 
-### GET /apis/custom.metrics.k8s.io/v1beta1
+Make requests to increment the counter:
+```bash
+curl http://your-service/get
+```
 
-Returns request count metrics in the Kubernetes custom metrics API format.
+### Checking Metrics
+
+View the metrics for a pod:
+```bash
+kubectl get --raw "/apis/custom.metrics.k8s.io/v1beta1/namespaces/default/pods/*/http_requests_total"
+```
+
+### HPA Configuration
+
+Example HPA configuration using the custom metric:
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: my-app
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: my-app
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+  - type: Object
+    object:
+      metric:
+        name: http_requests_total
+      describedObject:
+        apiVersion: v1
+        kind: Pod
+        name: my-app-pod
+      target:
+        type: Value
+        value: 10
+```
 
 ## License
 

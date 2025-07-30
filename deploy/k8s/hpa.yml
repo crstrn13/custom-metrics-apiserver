@@ -18,7 +18,7 @@ spec:
       describedObject:
         apiVersion: v1
         kind: Pod
-        name: custom-metrics-apiserver-76f447b7c5-c6q5c
+        name: <your-pod-name>
       target:
         type: Value
         value: 5

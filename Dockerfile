@@ -12,7 +12,7 @@ RUN go mod download
 
 # Copy the go source
 COPY cmd/ cmd/
-COPY internal/ internal/
+COPY pkg/ pkg/
 
 # Build
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -a -o mock-backend cmd/main.go

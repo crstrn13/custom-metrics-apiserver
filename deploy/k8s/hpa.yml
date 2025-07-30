@@ -1,0 +1,24 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nginx-deployment
+  namespace: custom-metrics
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-deployment
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+  - type: Object
+    object:
+      metric:
+        name: http_requests_total
+      describedObject:
+        apiVersion: v1
+        kind: Pod
+        name: custom-metrics-apiserver-76f447b7c5-c6q5c
+      target:
+        type: Value
+        value: 5

@@ -1,43 +1,74 @@
 apiVersion: v1
-kind: Service
+kind: Namespace
 metadata:
-  name: mock-backend
-  namespace: kuadrant
-  labels:
-    app: mock-backend
-  annotations:
-    "service.beta.openshift.io/serving-cert-secret-name": "mock-backend-tls"
-spec:
-  ports:
-  - port: 8080
-    name: http
-    targetPort: http
-  selector:
-    app: mock-backend
+  name: custom-metrics
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: custom-metrics:system:auth-delegator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+- kind: ServiceAccount
+  name: custom-metrics-apiserver
+  namespace: custom-metrics
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: custom-metrics-auth-reader
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: extension-apiserver-authentication-reader
+subjects:
+- kind: ServiceAccount
+  name: custom-metrics-apiserver
+  namespace: custom-metrics
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mock-backend
-  namespace: kuadrant
   labels:
-    app: mock-backend
+    app: custom-metrics-apiserver
+  name: custom-metrics-apiserver
+  namespace: custom-metrics
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: mock-backend
+      app: custom-metrics-apiserver
   template:
     metadata:
       labels:
-        app: mock-backend
+        app: custom-metrics-apiserver
+      name: custom-metrics-apiserver
     spec:
+      serviceAccountName: custom-metrics-apiserver
       containers:
-      - name: mock-backend
-        image: quay.io/acristur/mock-backend:latest
+      - name: custom-metrics-apiserver
+        image: quay.io/acristur/mock-backend:experimental
+        imagePullPolicy: Always
+        args:
+        - --secure-port=6443
+        - --cert-dir=/var/run/serving-cert
+        - --v=10
         ports:
+        - containerPort: 6443
+          name: https
         - containerPort: 8080
           name: http
+        volumeMounts:
+        - mountPath: /tmp
+          name: temp-vol
+          readOnly: false
+        - mountPath: /var/run/serving-cert
+          name: volume-serving-cert
+          readOnly: false
         env:
         - name: POD_NAME
           valueFrom:
@@ -47,14 +78,46 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
-        volumeMounts:
-        - name: tls-certs
-          mountPath: /certs
-          readOnly: true
       volumes:
-      - name: tls-certs
-        secret:
-          secretName: mock-backend-tls
+      - name: temp-vol
+        emptyDir: {}
+      - name: volume-serving-cert
+        emptyDir: {}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: custom-metrics-resource-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: custom-metrics-resource-reader
+subjects:
+- kind: ServiceAccount
+  name: custom-metrics-apiserver
+  namespace: custom-metrics
+---
+kind: ServiceAccount
+apiVersion: v1
+metadata:
+  name: custom-metrics-apiserver
+  namespace: custom-metrics
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: custom-metrics-apiserver
+  namespace: custom-metrics
+spec:
+  ports:
+  - name: https
+    port: 443
+    targetPort: 6443
+  - name: http
+    port: 80
+    targetPort: 8080
+  selector:
+    app: custom-metrics-apiserver
 ---
 apiVersion: apiregistration.k8s.io/v1
 kind: APIService
@@ -62,31 +125,76 @@ metadata:
   name: v1beta1.custom.metrics.k8s.io
 spec:
   service:
-    name: mock-backend
-    namespace: kuadrant
-    port: 8080
+    name: custom-metrics-apiserver
+    namespace: custom-metrics
   group: custom.metrics.k8s.io
   version: v1beta1
   insecureSkipTLSVerify: true
   groupPriorityMinimum: 100
   versionPriority: 100
 ---
-# apiVersion: autoscaling/v2
-# kind: HorizontalPodAutoscaler
-# metadata:
-#   name: mock-backend
-# spec:
-#   scaleTargetRef:
-#     apiVersion: apps/v1
-#     kind: Deployment
-#     name: mock-backend
-#   minReplicas: 1
-#   maxReplicas: 10
-#   metrics:
-#   - type: Pods
-#     pods:
-#       metric:
-#         name: http_requests_total
-#       target:
-#         type: AverageValue
-#         averageValue: 100 
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1beta2.custom.metrics.k8s.io
+spec:
+  service:
+    name: custom-metrics-apiserver
+    namespace: custom-metrics
+  group: custom.metrics.k8s.io
+  version: v1beta2
+  insecureSkipTLSVerify: true
+  groupPriorityMinimum: 100
+  versionPriority: 200
+---
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1beta1.external.metrics.k8s.io
+spec:
+  service:
+    name: custom-metrics-apiserver
+    namespace: custom-metrics
+  group: external.metrics.k8s.io
+  version: v1beta1
+  insecureSkipTLSVerify: true
+  groupPriorityMinimum: 100
+  versionPriority: 100
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: custom-metrics-server-resources
+rules:
+- apiGroups:
+  - custom.metrics.k8s.io
+  resources: ["*"]
+  verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: custom-metrics-resource-reader
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  - pods
+  - services
+  verbs:
+  - get
+  - list
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hpa-controller-custom-metrics
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: custom-metrics-server-resources
+subjects:
+- kind: ServiceAccount
+  name: horizontal-pod-autoscaler
+  namespace: kube-system

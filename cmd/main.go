@@ -1,61 +1,77 @@
 package main
 
 import (
-	"flag"
-	"log"
+	"context"
 	"net/http"
+	"os"
+	"time"
 
-	"crstrn13/mock-backend/internal/adapters/http/handlers"
-	"crstrn13/mock-backend/internal/adapters/metrics"
-	"crstrn13/mock-backend/internal/core/services"
+	"k8s.io/component-base/logs"
+	"k8s.io/component-base/metrics/legacyregistry"
+	"k8s.io/klog/v2"
+	"github.com/emicklei/go-restful/v3"
+
+	testProvider "crstrn13/mock-backend/pkg/provider"
+
+	"sigs.k8s.io/custom-metrics-apiserver/pkg/apiserver/metrics"
+	basecmd "sigs.k8s.io/custom-metrics-apiserver/pkg/cmd"
+	"sigs.k8s.io/custom-metrics-apiserver/pkg/provider"
 )
 
+type SampleAdapter struct {
+	basecmd.AdapterBase
+
+	// Message is printed on successful startup
+	Message string
+}
+
+func (a *SampleAdapter) makeProviderOrDie() (provider.CustomMetricsProvider, *restful.WebService) {
+	client, err := a.DynamicClient()
+	if err != nil {
+		klog.Fatalf("unable to construct dynamic client: %v", err)
+	}
+
+	mapper, err := a.RESTMapper()
+	if err != nil {
+		klog.Fatalf("unable to construct discovery REST mapper: %v", err)
+	}
+
+	return testProvider.NewFakeProvider(client, mapper)
+}
+
+
 func main() {
-	// Define flags
-	certFile := flag.String("cert", "/certs/tls.crt", "Path to TLS certificate file")
-	keyFile := flag.String("key", "/certs/tls.key", "Path to TLS private key file")
-	metricsPort := flag.String("metrics-port", ":8443", "HTTPS port for metrics")
-	httpPort := flag.String("http-port", ":8080", "HTTP port for regular traffic")
-	flag.Parse()
+	logs.InitLogs()
+	defer logs.FlushLogs()
 
-	// Initialize services
-	requestService := services.NewRequestService()
-	metricsProvider := metrics.NewProvider()
+	cmd := &SampleAdapter{}
+	cmd.Name = "test-adapter"
 
-	// Initialize handlers
-	requestHandler := handlers.NewRequestHandler(requestService, metricsProvider)
-
-	// Create HTTP mux for regular traffic
-	httpMux := http.NewServeMux()
-	httpMux.HandleFunc("/get", requestHandler.GetHandler)
-
-	// Create HTTPS mux for metrics
-	metricsMux := http.NewServeMux()
-	metricsMux.Handle("/apis/custom.metrics.k8s.io/v1beta1", metricsProvider)
-
-	// Create HTTP server for regular traffic
-	httpServer := &http.Server{
-		Addr:    *httpPort,
-		Handler: httpMux,
+	cmd.Flags().StringVar(&cmd.Message, "msg", "starting adapter...", "startup message")
+	logs.AddFlags(cmd.Flags())
+	if err := cmd.Flags().Parse(os.Args); err != nil {
+		klog.Fatalf("unable to parse flags: %v", err)
 	}
 
-	// Create HTTPS server for metrics
-	metricsServer := &http.Server{
-		Addr:    *metricsPort,
-		Handler: metricsMux,
+	testProvider, webService := cmd.makeProviderOrDie()
+	cmd.WithCustomMetrics(testProvider)
+
+	if err := metrics.RegisterMetrics(legacyregistry.Register); err != nil {
+		klog.Fatalf("unable to register metrics: %v", err)
 	}
 
-	// Start HTTP server in a goroutine
+	klog.Infof("%s", cmd.Message)
+	// Set up POST endpoint for writing fake metric values
+	restful.DefaultContainer.Add(webService)
 	go func() {
-		log.Printf("HTTP Server starting on %s", *httpPort)
-		if err := httpServer.ListenAndServe(); err != nil {
-			log.Fatalf("HTTP Server failed to start: %v", err)
+		// Open port for POSTing fake metrics
+		server := &http.Server{
+			Addr:              ":8080",
+			ReadHeaderTimeout: 3 * time.Second,
 		}
+		klog.Fatal(server.ListenAndServe())
 	}()
-
-	// Start HTTPS server for metrics
-	log.Printf("HTTPS Metrics Server starting on %s", *metricsPort)
-	if err := metricsServer.ListenAndServeTLS(*certFile, *keyFile); err != nil {
-		log.Fatalf("HTTPS Metrics Server failed to start: %v", err)
+	if err := cmd.Run(context.Background()); err != nil {
+		klog.Fatalf("unable to run custom metrics adapter: %v", err)
 	}
 }

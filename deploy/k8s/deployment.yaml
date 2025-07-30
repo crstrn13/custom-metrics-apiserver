@@ -51,7 +51,7 @@ spec:
       serviceAccountName: custom-metrics-apiserver
       containers:
       - name: custom-metrics-apiserver
-        image: quay.io/acristur/mock-backend:experimental
+        image: quay.io/acristur/custom-metrics-apiserver:latest
         imagePullPolicy: Always
         args:
         - --secure-port=6443

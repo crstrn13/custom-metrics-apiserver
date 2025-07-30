@@ -46,6 +46,7 @@ type testingProvider struct {
 	values     map[CustomMetricResource]metricValue
 }
 
+// NewFakeProvider creates a new testingProvider and returns it along with a restful.WebService
 func NewFakeProvider(client dynamic.Interface, mapper apimeta.RESTMapper) (provider.CustomMetricsProvider, *restful.WebService) {
 	provider := &testingProvider{
 		client: client,
@@ -55,12 +56,11 @@ func NewFakeProvider(client dynamic.Interface, mapper apimeta.RESTMapper) (provi
 	return provider, provider.webService()
 }
 
+// webService creates a restful.WebService with routes set up for receiving fake metrics
 func (p *testingProvider) webService() *restful.WebService {
 	ws := new(restful.WebService)
-
 	ws.Path("/get")
 	ws.Route(ws.GET("/").To(p.updateMetric))
-
 	return ws
 }
 
@@ -71,22 +71,20 @@ func (p *testingProvider) updateMetric(request *restful.Request, response *restf
 
 	namespace := os.Getenv("POD_NAMESPACE")
 	name := os.Getenv("POD_NAME")
-	namespaced := true
-	resourceType := "pods"
-	metricName := "http_requests_total"
-
-	groupResource := schema.ParseGroupResource(resourceType)
 
 	info := provider.CustomMetricInfo{
-		GroupResource: groupResource,
-		Metric:        metricName,
-		Namespaced:    namespaced,
+		GroupResource: schema.GroupResource{
+			Resource: "pods",
+		},
+		Metric:     "http_requests_total",
+		Namespaced: true,
 	}
 
 	info, _, err := info.Normalized(p.mapper)
 	if err != nil {
 		klog.Errorf("Error normalizing info: %s", err)
 	}
+
 	namespacedName := types.NamespacedName{
 		Name:      name,
 		Namespace: namespace,
@@ -187,6 +185,8 @@ func (p *testingProvider) metricsFor(namespace string, selector labels.Selector,
 		Items: res,
 	}, nil
 }
+
+// GetMetricByName is a wrapper used by GetMetricByName to format a metric which matches a resource name
 func (p *testingProvider) GetMetricByName(_ context.Context, name types.NamespacedName, info provider.CustomMetricInfo, metricSelector labels.Selector) (*custom_metrics.MetricValue, error) {
 	p.valuesLock.RLock()
 	defer p.valuesLock.RUnlock()
@@ -198,6 +198,7 @@ func (p *testingProvider) GetMetricByName(_ context.Context, name types.Namespac
 	return p.metricFor(value, name, labels.Everything(), info, metricSelector)
 }
 
+// GetMetricBySelector is a wrapper used by GetMetricBySelector to format several metrics which match a resource selector
 func (p *testingProvider) GetMetricBySelector(_ context.Context, namespace string, selector labels.Selector, info provider.CustomMetricInfo, metricSelector labels.Selector) (*custom_metrics.MetricValueList, error) {
 	p.valuesLock.RLock()
 	defer p.valuesLock.RUnlock()

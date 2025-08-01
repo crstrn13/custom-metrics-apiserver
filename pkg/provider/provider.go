@@ -2,7 +2,7 @@ package provider
 
 import (
 	"context"
-	"os"
+	"net/http"
 	"sync"
 
 	"github.com/emicklei/go-restful/v3"
@@ -59,8 +59,20 @@ func NewFakeProvider(client dynamic.Interface, mapper apimeta.RESTMapper) (provi
 // webService creates a restful.WebService with routes set up for receiving fake metrics
 func (p *testingProvider) webService() *restful.WebService {
 	ws := new(restful.WebService)
-	ws.Path("/get")
-	ws.Route(ws.GET("/").To(p.updateMetric))
+
+	ws.Path("/write-metrics")
+
+	// Namespaced resources
+	ws.Route(ws.POST("/namespaces/{namespace}/{resourceType}/{name}/{metric}").To(p.updateMetric).
+		Param(ws.BodyParameter("value", "value to set metric").DataType("integer").DefaultValue("0")))
+
+	// Root-scoped resources
+	ws.Route(ws.POST("/{resourceType}/{name}/{metric}").To(p.updateMetric).
+		Param(ws.BodyParameter("value", "value to set metric").DataType("integer").DefaultValue("0")))
+
+	// Namespaces, where {resourceType} == "namespaces" to match API
+	ws.Route(ws.POST("/{resourceType}/{name}/metrics/{metric}").To(p.updateMetric).
+		Param(ws.BodyParameter("value", "value to set metric").DataType("integer").DefaultValue("0")))
 	return ws
 }
 
@@ -69,22 +81,46 @@ func (p *testingProvider) updateMetric(request *restful.Request, response *restf
 	p.valuesLock.Lock()
 	defer p.valuesLock.Unlock()
 
-	namespace := os.Getenv("POD_NAMESPACE")
-	name := os.Getenv("POD_NAME")
+	namespace := request.PathParameter("namespace")
+	resourceType := request.PathParameter("resourceType")
+	namespaced := len(namespace) > 0 || resourceType == "namespaces"
 
-	info := provider.CustomMetricInfo{
-		GroupResource: schema.GroupResource{
-			Resource: "pods",
-		},
-		Metric:     "http_requests_total",
-		Namespaced: true,
+	name := request.PathParameter("name")
+	metricName := request.PathParameter("metric")
+
+	value := new(resource.Quantity)
+	err := request.ReadEntity(value)
+	if err != nil {
+		if err := response.WriteErrorString(http.StatusBadRequest, err.Error()); err != nil {
+			klog.Errorf("Error writing error: %s", err)
+		}
+		return
 	}
 
-	info, _, err := info.Normalized(p.mapper)
+	groupResource := schema.ParseGroupResource(resourceType)
+
+	metricLabels := labels.Set{}
+	sel := request.QueryParameter("labels")
+	if len(sel) > 0 {
+		metricLabels, err = labels.ConvertSelectorToLabelsMap(sel)
+		if err != nil {
+			if err := response.WriteErrorString(http.StatusBadRequest, err.Error()); err != nil {
+				klog.Errorf("Error writing error: %s", err)
+			}
+			return
+		}
+	}
+
+	info := provider.CustomMetricInfo{
+		GroupResource: groupResource,
+		Metric:        metricName,
+		Namespaced:    namespaced,
+	}
+
+	info, _, err = info.Normalized(p.mapper)
 	if err != nil {
 		klog.Errorf("Error normalizing info: %s", err)
 	}
-
 	namespacedName := types.NamespacedName{
 		Name:      name,
 		Namespace: namespace,
@@ -94,15 +130,10 @@ func (p *testingProvider) updateMetric(request *restful.Request, response *restf
 		CustomMetricInfo: info,
 		NamespacedName:   namespacedName,
 	}
-
-	if value, found := p.values[metricInfo]; found {
-		value.value.Add(*resource.NewQuantity(1, resource.DecimalSI))
-		p.values[metricInfo] = value
-	} else {
-		p.values[metricInfo] = metricValue{
-			value:     *resource.NewQuantity(1, resource.DecimalSI),
-			timestamp: metav1.Now(),
-		}
+	p.values[metricInfo] = metricValue{
+		labels:    metricLabels,
+		value:     *value,
+		timestamp: metav1.Now(),
 	}
 }
 

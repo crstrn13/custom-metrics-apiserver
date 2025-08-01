@@ -51,7 +51,7 @@ spec:
       serviceAccountName: custom-metrics-apiserver
       containers:
       - name: custom-metrics-apiserver
-        image: quay.io/acristur/custom-metrics-apiserver:latest
+        image: quay.io/acristur/custom-metrics-apiserver:experimental
         imagePullPolicy: Always
         args:
         - --secure-port=6443
@@ -69,15 +69,6 @@ spec:
         - mountPath: /var/run/serving-cert
           name: volume-serving-cert
           readOnly: false
-        env:
-        - name: POD_NAME
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.name
-        - name: POD_NAMESPACE
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.namespace
       volumes:
       - name: temp-vol
         emptyDir: {}
